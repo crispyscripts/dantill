@@ -15,11 +15,16 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         body { font-family: 'Inter', sans-serif; }
         [xl-cloak] { display: none; }
-        .animate-spin-slow { animation: spin 3s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spin-anim { animation: spin 1s linear infinite; display: inline-block; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body class="bg-slate-50 text-slate-900 antialiased">
+    <!-- Chosen Palette: Slate & Indigo (Modern Professional) -->
+    <!-- Application Structure Plan: A split-pane dashboard. Left pane handles all dynamic inputs (Market Data, HMRC Schemes) with logical grouping. Right pane acts as a sticky, real-time calculation engine that instantly updates as variables change, providing immediate financial feedback without page reloads. -->
+    <!-- Visualization & Content Choices: Payout Summary -> Goal: Financial Clarity -> Method: High-contrast data grid -> Interaction: Real-time calculation -> Justification: Precise numbers are more effective than charts for exact tax liability planning. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
     <div id="root"></div>
 
     <script type="text/babel">
@@ -35,6 +40,303 @@
                     return initialValue;
                 }
             });
+
+            useEffect(() => {
+                try {
+                    window.localStorage.setItem(key, JSON.stringify(storedValue));
+                } catch (error) {}
+            }, [key, storedValue]);
+
+            return [storedValue, setStoredValue];
+        }
+
+        // --- Reusable Input Component ---
+        const InputField = ({ 
+            label, id, value, onChange, type = "number", 
+            prefix, suffix, helperText, step="any", 
+            disabled = false, rightElement, isSelect = false, 
+            options = [], placeholder = "" 
+        }) => {
+            return (
+                <div className="w-full">
+                    <div className="flex justify-between items-end mb-1.5">
+                        <label htmlFor={id} className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                            {label}
+                        </label>
+                        {rightElement}
+                    </div>
+                    <div className="relative rounded-xl shadow-sm">
+                        {prefix && !isSelect && (
+                            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                                <span className="text-slate-400 sm:text-sm font-medium">{prefix}</span>
+                            </div>
+                        )}
+                        
+                        {isSelect ? (
+                            <select
+                                id={id}
+                                value={value}
+                                onChange={(e) => onChange(e.target.value)}
+                                className="block w-full rounded-xl py-3 pl-4 pr-10 text-slate-900 border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm outline-none bg-white appearance-none transition-all cursor-pointer"
+                            >
+                                {options.map(opt => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                            </select>
+                        ) : (
+                            <input
+                                type={type}
+                                id={id}
+                                value={value}
+                                onChange={(e) => onChange(e.target.value)}
+                                step={step}
+                                min="0"
+                                placeholder={placeholder}
+                                disabled={disabled}
+                                className={`block w-full rounded-xl py-3 sm:text-sm outline-none transition-all border
+                                    ${disabled ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed' : 'focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 border-slate-200 hover:border-slate-300'}
+                                    ${prefix ? 'pl-8' : 'pl-4'}
+                                    ${suffix ? 'pr-8' : 'pr-4'}
+                                `}
+                            />
+                        )}
+                        
+                        {suffix && !isSelect && (
+                            <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                                <span className="text-slate-400 sm:text-sm font-medium">{suffix}</span>
+                            </div>
+                        )}
+
+                        {isSelect && (
+                            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400 font-bold">
+                                ▾
+                            </div>
+                        )}
+                    </div>
+                    {helperText && (
+                        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">{helperText}</p>
+                    )}
+                </div>
+            );
+        };
+
+        // --- Reusable Toggle Component ---
+        const ToggleSwitch = ({ checked, onChange, colorClass = "bg-indigo-600" }) => {
+            return (
+                <button 
+                    type="button"
+                    onClick={() => onChange(!checked)} 
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex-shrink-0 cursor-pointer ${checked ? colorClass : 'bg-slate-300'}`}
+                >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+            );
+        };
+
+        function App() {
+            // Persisted State
+            const [ticker, setTicker] = useLocalStorage("opts_tkr", "NXT.L");
+            const [shares, setShares] = useLocalStorage("opts_shrs", "1000");
+            const [optionPrice, setOptionPrice] = useLocalStorage("opts_optP", "45.00");
+            const [salePrice, setSalePrice] = useLocalStorage("opts_salP", "85.00");
+            
+            // Scheme types: 'emi', 'saye', 'unapproved'
+            const [scheme, setScheme] = useLocalStorage("opts_schm", "emi");
+            
+            const [cgtRate, setCgtRate] = useLocalStorage("opts_cgtR", "18"); 
+            const [cgtAllowance, setCgtAllowance] = useLocalStorage("opts_cgtA", "3000");
+            const [useSpouseAllowance, setUseSpouseAllowance] = useLocalStorage("opts_spousA", false);
+            const [sayeIsaTransfer, setSayeIsaTransfer] = useLocalStorage("opts_sayeIsa", false);
+
+            const [incomeTaxRate, setIncomeTaxRate] = useLocalStorage("opts_itR", "40"); 
+            const [employeeNiRate, setEmployeeNiRate] = useLocalStorage("opts_eeNi", "2");
+            const [employerNiRate, setEmployerNiRate] = useLocalStorage("opts_erNi", "15");
+            const [passEmployerNi, setPassEmployerNi] = useLocalStorage("opts_passErNi", true);
+
+            // Fetch State
+            const [isLoadingPrice, setIsLoadingPrice] = useState(false);
+            const [fetchStatus, setFetchStatus] = useState('idle');
+            const [fetchMessage, setFetchMessage] = useState('');
+
+            // Auto-adjust default CGT rate when switching to SAYE vs EMI
+            useEffect(() => {
+                if (scheme === 'saye' && cgtRate === '18') {
+                    setCgtRate('24'); 
+                } else if (scheme === 'emi' && cgtRate === '24') {
+                    setCgtRate('18'); 
+                }
+            }, [scheme, cgtRate, setCgtRate]);
+
+            // Lightning fast Yahoo Finance API fetcher (No API Key Required)
+            const fetchLivePrice = useCallback(async () => {
+                if (!ticker.trim()) return;
+                setIsLoadingPrice(true);
+                setFetchStatus('idle');
+                
+                try {
+                    const symbol = ticker.trim().toUpperCase();
+                    // Using Yahoo Finance API via AllOrigins to bypass CORS issues on Vercel
+                    const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`;
+                    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yfUrl)}`;
+
+                    const response = await fetch(proxyUrl);
+                    if (!response.ok) throw new Error('Network error');
+
+                    const data = await response.json();
+                    
+                    if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
+                        throw new Error('Ticker not found');
+                    }
+
+                    let price = data.chart.result[0].meta.regularMarketPrice;
+                    let currency = data.chart.result[0].meta.currency;
+
+                    // Handle UK Stocks (Quoted in pence / GBp)
+                    if (currency === 'GBp') {
+                        price = price / 100;
+                        setFetchMessage(`Live update (Converted from pence)`);
+                    } 
+                    // Handle Foreign Stocks (e.g. USD, EUR) -> Fetch live exchange rate to GBP
+                    else if (currency && currency !== 'GBP') {
+                        setFetchMessage('Fetching exchange rate...');
+                        const fxUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${currency}GBP=X`;
+                        const fxProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(fxUrl)}`;
+                        
+                        const fxRes = await fetch(fxProxy);
+                        if(fxRes.ok) {
+                            const fxData = await fxRes.json();
+                            const exchangeRate = fxData.chart.result[0].meta.regularMarketPrice;
+                            price = price * exchangeRate;
+                            setFetchMessage(`Live update (Converted ${currency} to GBP)`);
+                        } else {
+                            setFetchMessage(`Live update (${currency} - Not converted)`);
+                        }
+                    } else {
+                        setFetchMessage('Live update successful');
+                    }
+
+                    setSalePrice(price.toFixed(2));
+                    setFetchStatus('success');
+
+                } catch (e) {
+                    setFetchStatus('error');
+                    setFetchMessage('Search failed - check ticker');
+                } finally {
+                    setIsLoadingPrice(false);
+                }
+            }, [ticker, setSalePrice]);
+
+            // Calculations
+            const numShares = parseFloat(shares) || 0;
+            const pOpt = parseFloat(optionPrice) || 0;
+            const pSale = parseFloat(salePrice) || 0;
+            const grossProfit = (numShares * pSale) - (numShares * pOpt);
+
+            let taxBreakdown = { cgt: 0, it: 0, eeNi: 0, erNi: 0 };
+            
+            if (grossProfit > 0) {
+                if (scheme === 'emi' || scheme === 'saye') {
+                    if (scheme === 'saye' && sayeIsaTransfer) {
+                        taxBreakdown.cgt = 0; 
+                    } else {
+                        const allowance = (parseFloat(cgtAllowance) || 0) * (useSpouseAllowance ? 2 : 1);
+                        const taxableGain = Math.max(0, grossProfit - allowance);
+                        taxBreakdown.cgt = taxableGain * (parseFloat(cgtRate) / 100);
+                    }
+                } else if (scheme === 'unapproved') {
+                    if (passEmployerNi) {
+                        taxBreakdown.erNi = grossProfit * (parseFloat(employerNiRate) / 100);
+                    }
+                    taxBreakdown.eeNi = grossProfit * (parseFloat(employeeNiRate) / 100);
+                    
+                    const taxableIncome = Math.max(0, grossProfit - taxBreakdown.erNi);
+                    taxBreakdown.it = taxableIncome * (parseFloat(incomeTaxRate) / 100);
+                }
+            }
+            
+            const totalTax = Object.values(taxBreakdown).reduce((a, b) => a + b, 0);
+            const netResult = grossProfit - totalTax;
+            const fmt = (v) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(v);
+
+            return (
+                <div className="max-w-6xl mx-auto py-12 px-6">
+                    <header className="mb-12">
+                        <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight">Options Payout Dashboard</h1>
+                        <p className="text-slate-500 mt-2 font-medium">Universal UK Tax Calculator (No API Keys Required)</p>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                        
+                        {/* LEFT COLUMN: Inputs */}
+                        <div className="lg:col-span-7 space-y-6">
+                            
+                            <section className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                                <h2 className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-8 flex items-center gap-2">
+                                    <span className="text-lg leading-none">■</span> 01. Portfolio Data
+                                </h2>
+                                <div className="space-y-6">
+                                    <InputField 
+                                        label="Ticker / Company Name" 
+                                        id="tickerInput"
+                                        value={ticker} 
+                                        onChange={setTicker} 
+                                        type="text"
+                                        placeholder="e.g. NXT.L, AAPL, TSLA"
+                                        rightElement={
+                                            <button 
+                                                onClick={fetchLivePrice} 
+                                                disabled={isLoadingPrice} 
+                                                className="text-[11px] font-bold text-indigo-600 flex items-center gap-1.5 hover:text-indigo-800 transition-colors uppercase tracking-wider"
+                                            >
+                                                <span className={isLoadingPrice ? 'spin-anim' : ''}>⟳</span> 
+                                                {isLoadingPrice ? 'Fetching...' : 'Live Fetch'}
+                                            </button>
+                                        }
+                                        helperText={
+                                            fetchStatus === 'success' ? (<span className="text-emerald-600 font-semibold">✓ {fetchMessage}</span>) : 
+                                            fetchStatus === 'error' ? (<span className="text-rose-500">⚠ {fetchMessage}</span>) : null
+                                        }
+                                    />
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                                        <InputField id="sharesInput" label="No. Shares" value={shares} onChange={setShares} />
+                                        <InputField id="optPriceInput" label="Option Price" value={optionPrice} onChange={setOptionPrice} prefix="£" />
+                                        <InputField id="salePriceInput" label="Market Price" value={salePrice} onChange={setSalePrice} prefix="£" />
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+                                    <h2 className="text-xs font-black uppercase tracking-widest text-indigo-600 flex items-center gap-2">
+                                        <span className="text-lg leading-none">■</span> 02. HMRC Scheme Setup
+                                    </h2>
+                                    <div className="flex flex-wrap bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+                                        <button 
+                                            onClick={() => setScheme('emi')} 
+                                            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${scheme === 'emi' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >EMI/CSOP</button>
+                                        <button 
+                                            onClick={() => setScheme('saye')} 
+                                            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${scheme === 'saye' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >Sharesave (SAYE)</button>
+                                        <button 
+                                            onClick={() => setScheme('unapproved')} 
+                                            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${scheme === 'unapproved' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >Unapproved</button>
+                                    </div>
+                                </div>
+
+                                {(scheme === 'emi' || scheme === 'saye') && (
+                                    <div className="space-y-6">
+                                        {scheme === 'saye' && (
+                                            <div className="p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100 flex flex-col gap-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="pr-4">
+                                                        <p className="text-sm font-bold text-emerald-900">Transfer to ISA? (Within 90 days)</p>
+                                                        <p className="text-[11px] text-emerald-700 mt-1">If transferred within 90 days of exercise, SAYE shares are completely exempt from CGT (Max £20k/yr).</p>
+                                                    </div>
+                                                    <ToggleSwitch 
+                                });
 
             useEffect(() => {
                 try {
