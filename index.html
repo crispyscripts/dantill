@@ -117,75 +117,203 @@
 
         function App() {
             // Persisted State
-            const [ticker, setTicker] = useLocalStorage("u_opts_ticker_v4", "NXT.L");
-            const [shares, setShares] = useLocalStorage("u_opts_shares_v4", "1000");
-            const [optionPrice, setOptionPrice] = useLocalStorage("u_opts_optionPrice_v4", "45.00");
-            const [salePrice, setSalePrice] = useLocalStorage("u_opts_salePrice_v4", "85.00");
+            const [ticker, setTicker] = useLocalStorage("u_opts_ticker_v5", "NXT.L");
+            const [shares, setShares] = useLocalStorage("u_opts_shares_v5", "1000");
+            const [optionPrice, setOptionPrice] = useLocalStorage("u_opts_optionPrice_v5", "45.00");
+            const [salePrice, setSalePrice] = useLocalStorage("u_opts_salePrice_v5", "85.00");
             
             // Scheme: 'emi', 'saye', 'unapproved'
-            const [scheme, setScheme] = useLocalStorage("u_opts_scheme_v4", "emi");
+            const [scheme, setScheme] = useLocalStorage("u_opts_scheme_v5", "emi");
             
-            const [cgtRate, setCgtRate] = useLocalStorage("u_opts_cgtRate_v4", "18"); 
-            const [cgtAllowance, setCgtAllowance] = useLocalStorage("u_opts_cgtAllowance_v4", "3000");
-            const [useSpouseAllowance, setUseSpouseAllowance] = useLocalStorage("u_opts_useSpouseAllowance_v4", false);
+            const [cgtRate, setCgtRate] = useLocalStorage("u_opts_cgtRate_v5", "18"); 
+            const [cgtAllowance, setCgtAllowance] = useLocalStorage("u_opts_cgtAllowance_v5", "3000");
+            const [useSpouseAllowance, setUseSpouseAllowance] = useLocalStorage("u_opts_useSpouseAllowance_v5", false);
             
             // Sharesave specific
-            const [sayeIsaTransfer, setSayeIsaTransfer] = useLocalStorage("u_opts_sayeIsaTransfer_v4", false);
+            const [sayeIsaTransfer, setSayeIsaTransfer] = useLocalStorage("u_opts_sayeIsaTransfer_v5", false);
 
-            const [incomeTaxRate, setIncomeTaxRate] = useLocalStorage("u_opts_incomeTaxRate_v4", "40"); 
-            const [employeeNiRate, setEmployeeNiRate] = useLocalStorage("u_opts_employeeNiRate_v4", "2");
-            const [employerNiRate, setEmployerNiRate] = useLocalStorage("u_opts_employerNiRate_v4", "15");
-            const [passEmployerNi, setPassEmployerNi] = useLocalStorage("u_opts_passEmployerNi_v4", true);
+            const [incomeTaxRate, setIncomeTaxRate] = useLocalStorage("u_opts_incomeTaxRate_v5", "40"); 
+            const [employeeNiRate, setEmployeeNiRate] = useLocalStorage("u_opts_employeeNiRate_v5", "2");
+            const [employerNiRate, setEmployerNiRate] = useLocalStorage("u_opts_employerNiRate_v5", "15");
+            const [passEmployerNi, setPassEmployerNi] = useLocalStorage("u_opts_passEmployerNi_v5", true);
 
             // Fetch State
             const [isLoadingPrice, setIsLoadingPrice] = useState(false);
             const [fetchStatus, setFetchStatus] = useState('idle');
             const [fetchMessage, setFetchMessage] = useState('');
-            const apiKey = ""; 
 
             // Auto-adjust default CGT rate when switching to SAYE vs EMI
             useEffect(() => {
                 if (scheme === 'saye' && cgtRate === '18') {
-                    setCgtRate('24'); // Standard higher rate CGT for assets
+                    setCgtRate('24'); 
                 } else if (scheme === 'emi' && cgtRate === '24') {
-                    setCgtRate('18'); // BADR rate
+                    setCgtRate('18'); 
                 }
             }, [scheme]);
 
+            // Lightning fast Yahoo Finance API fetcher (No API Key Required)
             const fetchLivePrice = useCallback(async () => {
                 if (!ticker.trim()) return;
                 setIsLoadingPrice(true);
                 setFetchStatus('idle');
                 
-                const userQuery = `Current live share price of ${ticker} in GBP.`;
-                const systemPrompt = `Return ONLY the numerical share price of ${ticker} in GBP. Convert foreign currencies to GBP. If in pence (GBX), convert to pounds. No text, just the number.`;
+                try {
+                    const symbol = ticker.trim().toUpperCase();
+                    // Using Yahoo Finance API via AllOrigins to bypass CORS issues on Vercel/Netlify
+                    const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`;
+                    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(yfUrl)}`;
 
-                const fetchWithRetry = async (retries = 0) => {
-                    try {
-                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{ parts: [{ text: userQuery }] }],
-                                systemInstruction: { parts: [{ text: systemPrompt }] },
-                                tools: [{ "google_search": {} }]
-                            })
-                        });
-                        const result = await response.json();
-                        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-                        const match = text.match(/\d+(\.\d{1,4})?/);
-                        if (match) {
-                            setSalePrice(match[0]);
-                            setFetchStatus('success');
-                            setFetchMessage('Live update successful');
-                        } else throw new Error();
-                    } catch (e) {
-                        if (retries < 5) {
-                            await new Promise(r => setTimeout(r, Math.pow(2, retries) * 1000));
-                            return fetchWithRetry(retries + 1);
+                    const response = await fetch(proxyUrl);
+                    if (!response.ok) throw new Error('Network error');
+
+                    const data = await response.json();
+                    
+                    if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
+                        throw new Error('Ticker not found');
+                    }
+
+                    let price = data.chart.result[0].meta.regularMarketPrice;
+                    let currency = data.chart.result[0].meta.currency;
+
+                    // Handle UK Stocks (Quoted in pence / GBp)
+                    if (currency === 'GBp') {
+                        price = price / 100;
+                        setFetchMessage(`Live update (Converted from pence)`);
+                    } 
+                    // Handle Foreign Stocks (e.g. USD, EUR) -> Fetch live exchange rate to GBP
+                    else if (currency && currency !== 'GBP') {
+                        setFetchMessage('Fetching exchange rate...');
+                        const fxUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${currency}GBP=X`;
+                        const fxProxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(fxUrl)}`;
+                        
+                        const fxRes = await fetch(fxProxy);
+                        if(fxRes.ok) {
+                            const fxData = await fxRes.json();
+                            const exchangeRate = fxData.chart.result[0].meta.regularMarketPrice;
+                            price = price * exchangeRate;
+                            setFetchMessage(`Live update (Converted ${currency} to GBP)`);
+                        } else {
+                            setFetchMessage(`Live update (${currency} - Not converted to GBP)`);
                         }
-                        setFetchStatus('error');
-                        setFetchMessage('Search failed - check ticker');
+                    } else {
+                        setFetchMessage('Live update successful');
+                    }
+
+                    setSalePrice(price.toFixed(2));
+                    setFetchStatus('success');
+
+                } catch (e) {
+                    setFetchStatus('error');
+                    setFetchMessage('Search failed - check ticker');
+                } finally {
+                    setIsLoadingPrice(false);
+                }
+            }, [ticker, setSalePrice]);
+
+            // Calculations
+            const numShares = parseFloat(shares) || 0;
+            const pOpt = parseFloat(optionPrice) || 0;
+            const pSale = parseFloat(salePrice) || 0;
+            const grossProfit = (numShares * pSale) - (numShares * pOpt);
+
+            let taxBreakdown = { cgt: 0, it: 0, eeNi: 0, erNi: 0 };
+            
+            if (grossProfit > 0) {
+                if (scheme === 'emi' || scheme === 'saye') {
+                    if (scheme === 'saye' && sayeIsaTransfer) {
+                        taxBreakdown.cgt = 0; 
+                    } else {
+                        const allowance = (parseFloat(cgtAllowance) || 0) * (useSpouseAllowance ? 2 : 1);
+                        taxBreakdown.cgt = Math.max(0, grossProfit - allowance) * (parseFloat(cgtRate) / 100);
+                    }
+                } else if (scheme === 'unapproved') {
+                    if (passEmployerNi) taxBreakdown.erNi = grossProfit * (parseFloat(employerNiRate) / 100);
+                    taxBreakdown.eeNi = grossProfit * (parseFloat(employeeNiRate) / 100);
+                    taxBreakdown.it = Math.max(0, grossProfit - taxBreakdown.erNi) * (parseFloat(incomeTaxRate) / 100);
+                }
+            }
+            const totalTax = Object.values(taxBreakdown).reduce((a, b) => a + b, 0);
+            const netResult = grossProfit - totalTax;
+            const fmt = (v) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(v);
+
+            return (
+                <div className="max-w-6xl mx-auto py-12 px-6">
+                    <header className="mb-12">
+                        <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight">Options Payout Dashboard</h1>
+                        <p className="text-slate-500 mt-2 font-medium">UK Tax Calculator for EMI, Sharesave (SAYE), and Unapproved Schemes</p>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                        <div className="lg:col-span-7 space-y-6">
+                            <section className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                                <h2 className="text-xs font-black uppercase tracking-widest text-indigo-600 mb-8 flex items-center gap-2">
+                                    <span className="text-lg leading-none">■</span> 01. Portfolio Data
+                                </h2>
+                                <div className="space-y-6">
+                                    <InputField 
+                                        label="Ticker / Company Name" value={ticker} onChange={setTicker} type="text"
+                                        placeholder="e.g. NXT.L, AAPL, TSLA"
+                                        rightElement={
+                                            <button onClick={fetchLivePrice} disabled={isLoadingPrice} className="text-[11px] font-bold text-indigo-600 flex items-center gap-1.5 hover:text-indigo-800 transition-colors uppercase tracking-wider">
+                                                {isLoadingPrice ? '⟳ Fetching...' : '⟳ Live Fetch'}
+                                            </button>
+                                        }
+                                        helperText={fetchStatus === 'success' ? <span className="text-emerald-600 font-semibold">{fetchMessage}</span> : <span className="text-rose-500">{fetchMessage}</span>}
+                                    />
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                                        <InputField label="No. Shares" value={shares} onChange={setShares} />
+                                        <InputField label="Option Price" value={optionPrice} onChange={setOptionPrice} prefix="£" />
+                                        <InputField label="Market Price" value={salePrice} onChange={setSalePrice} prefix="£" />
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+                                    <h2 className="text-xs font-black uppercase tracking-widest text-indigo-600 flex items-center gap-2">
+                                        <span className="text-lg leading-none">■</span> 02. HMRC Scheme Setup
+                                    </h2>
+                                    <div className="flex flex-wrap bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+                                        <button onClick={() => setScheme('emi')} className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${scheme === 'emi' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}>EMI/CSOP</button>
+                                        <button onClick={() => setScheme('saye')} className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${scheme === 'saye' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}>Sharesave (SAYE)</button>
+                                        <button onClick={() => setScheme('unapproved')} className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${scheme === 'unapproved' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:text-slate-700'}`}>Unapproved</button>
+                                    </div>
+                                </div>
+
+                                {(scheme === 'emi' || scheme === 'saye') && (
+                                    <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
+                                        
+                                        {scheme === 'saye' && (
+                                            <div className="p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100 flex flex-col gap-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="pr-4">
+                                                        <p className="text-sm font-bold text-emerald-900">Transfer to ISA? (Within 90 days)</p>
+                                                        <p className="text-[11px] text-emerald-700 mt-1">If transferred within 90 days of exercise, SAYE shares are completely exempt from CGT (Max £20k/yr).</p>
+                                                    </div>
+                                                    <ToggleSwitch checked={sayeIsaTransfer} onChange={setSayeIsaTransfer} colorClass="bg-emerald-500" />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-5 transition-opacity ${scheme === 'saye' && sayeIsaTransfer ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+                                            <InputField label="CGT Rate" value={cgtRate} onChange={setCgtRate} suffix="%" helperText={scheme === 'emi' ? "BADR standard is 18%." : "SAYE usually pays standard CGT rates (e.g. 24%)."} />
+                                            <InputField label="Personal Allowance" value={cgtAllowance} onChange={setCgtAllowance} prefix="£" />
+                                        </div>
+                                        
+                                        <div className={`p-5 bg-indigo-50/50 rounded-2xl border border-indigo-100 flex items-center justify-between transition-all ${scheme === 'saye' && sayeIsaTransfer ? 'opacity-40 pointer-events-none' : 'opacity-100 hover:bg-indigo-50'}`}>
+                                            <div className="pr-4">
+                                                <p className="text-sm font-bold text-slate-800">Use Spouse's Allowance?</p>
+                                                <p className="text-[11px] text-slate-500 mt-1 italic">Inter-spouse transfer effectively doubles your tax-free threshold.</p>
+                                            </div>
+                                            <ToggleSwitch checked={useSpouseAllowance} onChange={setUseSpouseAllowance} />
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                {scheme === 'unapproved' && (
+                                    <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                                            <InputField label="Income Tax Band" value={incomeTaxRate} onChange={setIncomeTaxRate} isSelect={true} options={[{label:'Basic (20%)', value:'20'},{label:'Higher (40%)', value:'            setFetchMessage('Search failed - check ticker');
                     }
                 };
                 await fetchWithRetry();
